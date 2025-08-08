@@ -9,7 +9,7 @@
 #include "StatEnum.h"
 #include "Algo/RandomShuffle.h"
 
-void GuildManager::GenerateAdventurerGroup(int32 AdCount)
+void GuildManager::GenerateAdventurerGroup(int32 AdCount) // Generate a group of adventurers based on the specified count
 {
 	Adventurers.Empty();
 	for (int i = 0; i < AdCount; i++)
@@ -19,12 +19,12 @@ void GuildManager::GenerateAdventurerGroup(int32 AdCount)
 	}
 }
 
-FAdventurerInfo GuildManager::GenerateAdventurer()
+FAdventurerInfo GuildManager::GenerateAdventurer() // Generates a single adventurer with random attributes
 {
 	FAdventurerInfo NewAdventurer;
 	bool bFoundName = false;
 
-	//Picks from Twitch Names
+	// Try picking name from TwitchNames
 	for (const FCharacterNameEntry& Entry : TwitchNames)
 	{
 		if (!IsNameUsed(Entry.Name))
@@ -36,7 +36,7 @@ FAdventurerInfo GuildManager::GenerateAdventurer()
 		}
 	}
 
-	//Picks from Player-added Names
+	// If not found, pick from CustomNames
 	if (!bFoundName)
 	{
 		for (const FCharacterNameEntry& Entry : CustomNames)
@@ -52,7 +52,7 @@ FAdventurerInfo GuildManager::GenerateAdventurer()
 	}
 
 
-	//Picks from Default Names
+	// If still not found, pick from CharacterNameTable DataTable
 	if (!bFoundName && CharacterNameTable)
 	{
 		static const FString ContextString(TEXT("Getting Character Names"));
@@ -78,6 +78,7 @@ FAdventurerInfo GuildManager::GenerateAdventurer()
 		}
 	}
 	
+	// Initialize stats (assign default or randomized values as needed) TODO: Implement proper stat generation logic
 	NewAdventurer.MaxHealth;
 	NewAdventurer.CurrentHealth;
 	NewAdventurer.Strength;
@@ -90,7 +91,21 @@ FAdventurerInfo GuildManager::GenerateAdventurer()
 	return NewAdventurer;
 }
 
-void GuildManager::GenerateQuestGroup(int32 QCount)
+bool GuildManager::IsNameUsed(const FString& Name) // Check if the specified name is already in use
+{
+	for (const FAdventurerInfo& Adventurer : Adventurers)
+	{
+		if (Adventurer.Name == Name)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+
+//Quest Generation
+void GuildManager::GenerateQuestGroup(int32 QCount) // Generates a group of quests based on the specified count
 {
 	QuestList.Empty();
 	for (int i = 0; i < QCount; i++)
@@ -101,7 +116,50 @@ void GuildManager::GenerateQuestGroup(int32 QCount)
 	}
 }
 
-EQuestRank GuildManager::ChooseQuestRank(EGuildRank GuildRank)
+FQuestInstance GuildManager::GenerateQuest() // Generates a single quest
+{
+	FQuestInstance NewQuest;
+
+	if (!QuestDetailsTable)
+	{
+		return NewQuest; // Early return if no DataTable
+	}
+
+	static const FString ContextString(TEXT("Getting Quest Data"));
+	TArray<FQuestDataRow*> AllRows;
+	QuestDetailsTable->GetAllRows<FQuestDataRow>(ContextString, AllRows);
+	if (AllRows.Num() == 0)
+	{
+		return NewQuest; // No quests available
+	}
+
+	// Pick random quest data
+	Algo::RandomShuffle(AllRows);
+	NewQuest.QuestData = *AllRows[0];
+
+	// Choose quest rank based on guild rank
+	NewQuest.QuestRank = ChooseQuestRank(CurrentGuildRank);
+
+	// Get RankData for this rank (you need a function or DataTable lookup)
+	FQuestRankData* RankData = GetRankData(NewQuest.QuestRank);
+	if (!RankData)
+	{
+		return NewQuest; // Fail safe
+	}
+
+	// Randomize Duration and XPReward within RankData ranges
+	NewQuest.Duration = FMath::RandRange(RankData->MinDuration, RankData->MaxDuration);
+	NewQuest.XPReward = FMath::RandRange(RankData->MinXP, RankData->MaxXP);
+
+	// Generate and assign stats based on priority string and min/max stat difficulty
+	AssignStatsWithPriority(NewQuest, RankData->MinStatDifficulty, RankData->MaxStatDifficulty, NewQuest.QuestData.StatPriorityString);
+
+	NewQuest.bIsCompleted = false;
+
+	return NewQuest;
+}
+
+EQuestRank GuildManager::ChooseQuestRank(EGuildRank GuildRank) // Determine quest rank based on guild rank's chance distribution
 {
 	const FGuildRankQuestChancesRow* ChancesRow = QuestChances->FindRow<FGuildRankQuestChancesRow>(FName(*GuildRankToString(GuildRank)), TEXT(""));
 
@@ -127,55 +185,7 @@ EQuestRank GuildManager::ChooseQuestRank(EGuildRank GuildRank)
 	return ChancesRow->RankChances.Last().QuestRank;
 }
 
-FString GuildManager::GuildRankToString(EGuildRank Rank)
-{
-	switch (Rank)
-	{
-	case EGuildRank::F: return TEXT("F");
-	case EGuildRank::E: return TEXT("E");
-	case EGuildRank::D: return TEXT("D");
-	case EGuildRank::C: return TEXT("C");
-	case EGuildRank::B: return TEXT("B");
-	case EGuildRank::A: return TEXT("A");
-	case EGuildRank::S: return TEXT("S");
-	default: return TEXT("Unknown");
-	}
-}
-
-EStatTypeEnum GuildManager::ConvertStringToStatEnum(const FString& StatName)
-{
-	FString CleanName = StatName.TrimStartAndEnd();
-
-	if (CleanName.Equals(TEXT("Strength"), ESearchCase::IgnoreCase))
-	{
-		return EStatTypeEnum::Strength;
-	}
-	else if (CleanName.Equals(TEXT("Intelligence"), ESearchCase::IgnoreCase))
-	{
-		return EStatTypeEnum::Intelligence;
-	}
-	else if (CleanName.Equals(TEXT("Dexterity"), ESearchCase::IgnoreCase))
-	{
-		return EStatTypeEnum::Dexterity;
-	}
-	else if (CleanName.Equals(TEXT("Wisdom"), ESearchCase::IgnoreCase))
-	{
-		return EStatTypeEnum::Wisdom;
-	}
-	else if (CleanName.Equals(TEXT("Charisma"), ESearchCase::IgnoreCase))
-	{
-		return EStatTypeEnum::Charisma;
-	}
-	else if (CleanName.Equals(TEXT("Constitution"), ESearchCase::IgnoreCase))
-	{
-		return EStatTypeEnum::Constitution;
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("ConvertStringToStatEnum: Unknown stat name '%s'"), *StatName);
-	return EStatTypeEnum::None; 
-}
-
-FQuestRankData* GuildManager::GetRankData(EQuestRank QuestRank)
+FQuestRankData* GuildManager::GetRankData(EQuestRank QuestRank) // Retrieves the rank data for a given quest rank
 {
 	if (!QuestRankDataTable)
 	{
@@ -189,22 +199,7 @@ FQuestRankData* GuildManager::GetRankData(EQuestRank QuestRank)
 	return QuestRankDataTable->FindRow<FQuestRankData>(RowName, TEXT("Getting Quest Rank Data"));
 }
 
-FString GuildManager::QuestRankToString(EQuestRank Rank)
-{
-	switch (Rank)
-	{
-		case EQuestRank::F: return TEXT("F");
-		case EQuestRank::E: return TEXT("E");
-		case EQuestRank::D: return TEXT("D");
-		case EQuestRank::C: return TEXT("C");
-		case EQuestRank::B: return TEXT("B");
-		case EQuestRank::A: return TEXT("A");
-		case EQuestRank::S: return TEXT("S");
-		default: return TEXT("Unknown");
-	}
-}
-
-void GuildManager::AssignStatsWithPriority(FQuestInstance& Quest, int32 MinStat, int32 MaxStat, const FString& StatPriorityString)
+void GuildManager::AssignStatsWithPriority(FQuestInstance& Quest, int32 MinStat, int32 MaxStat, const FString& StatPriorityString) // Assigns stats to a quest based on the specified priority string
 {
 	// 1. Generate 6 random stat values
 	TArray<int32> StatValues;
@@ -258,57 +253,67 @@ void GuildManager::AssignStatsWithPriority(FQuestInstance& Quest, int32 MinStat,
 	}
 }
 
-FQuestInstance GuildManager::GenerateQuest()
+EStatTypeEnum GuildManager::ConvertStringToStatEnum(const FString& StatName) // Converts a string representation of a stat name to the corresponding EStatTypeEnum
 {
-	FQuestInstance NewQuest;
+	FString CleanName = StatName.TrimStartAndEnd();
 
-	if (!QuestDetailsTable)
+	if (CleanName.Equals(TEXT("Strength"), ESearchCase::IgnoreCase))
 	{
-		return NewQuest; // Early return if no DataTable
+		return EStatTypeEnum::Strength;
+	}
+	else if (CleanName.Equals(TEXT("Intelligence"), ESearchCase::IgnoreCase))
+	{
+		return EStatTypeEnum::Intelligence;
+	}
+	else if (CleanName.Equals(TEXT("Dexterity"), ESearchCase::IgnoreCase))
+	{
+		return EStatTypeEnum::Dexterity;
+	}
+	else if (CleanName.Equals(TEXT("Wisdom"), ESearchCase::IgnoreCase))
+	{
+		return EStatTypeEnum::Wisdom;
+	}
+	else if (CleanName.Equals(TEXT("Charisma"), ESearchCase::IgnoreCase))
+	{
+		return EStatTypeEnum::Charisma;
+	}
+	else if (CleanName.Equals(TEXT("Constitution"), ESearchCase::IgnoreCase))
+	{
+		return EStatTypeEnum::Constitution;
 	}
 
-	static const FString ContextString(TEXT("Getting Quest Data"));
-	TArray<FQuestDataRow*> AllRows;
-	QuestDetailsTable->GetAllRows<FQuestDataRow>(ContextString, AllRows);
-	if (AllRows.Num() == 0)
-	{
-		return NewQuest; // No quests available
-	}
-
-	// Pick random quest data
-	Algo::RandomShuffle(AllRows);
-	NewQuest.QuestData = *AllRows[0];
-
-	// Choose quest rank based on guild rank
-	NewQuest.QuestRank = ChooseQuestRank(CurrentGuildRank);
-
-	// Get RankData for this rank (you need a function or DataTable lookup)
-	FQuestRankData* RankData = GetRankData(NewQuest.QuestRank);
-	if (!RankData)
-	{
-		return NewQuest; // Fail safe
-	}
-
-	// Randomize Duration and XPReward within RankData ranges
-	NewQuest.Duration = FMath::RandRange(RankData->MinDuration, RankData->MaxDuration);
-	NewQuest.XPReward = FMath::RandRange(RankData->MinXP, RankData->MaxXP);
-
-	// Generate and assign stats based on priority string and min/max stat difficulty
-	AssignStatsWithPriority(NewQuest, RankData->MinStatDifficulty, RankData->MaxStatDifficulty, NewQuest.QuestData.StatPriorityString);
-
-	NewQuest.bIsCompleted = false;
-
-	return NewQuest;
+	UE_LOG(LogTemp, Warning, TEXT("ConvertStringToStatEnum: Unknown stat name '%s'"), *StatName);
+	return EStatTypeEnum::None; 
 }
 
-bool GuildManager::IsNameUsed(const FString& Name)
+
+
+FString GuildManager::QuestRankToString(EQuestRank Rank) // Converts EQuestRank to a string representation
 {
-	for (const FAdventurerInfo& Adventurer : Adventurers)
+	switch (Rank)
 	{
-		if (Adventurer.Name == Name)
-		{
-			return true;
-		}
+		case EQuestRank::F: return TEXT("F");
+		case EQuestRank::E: return TEXT("E");
+		case EQuestRank::D: return TEXT("D");
+		case EQuestRank::C: return TEXT("C");
+		case EQuestRank::B: return TEXT("B");
+		case EQuestRank::A: return TEXT("A");
+		case EQuestRank::S: return TEXT("S");
+		default: return TEXT("Unknown");
 	}
-	return false;
+}
+
+FString GuildManager::GuildRankToString(EGuildRank Rank) // Converts EGuildRank to a string representation
+{
+	switch (Rank)
+	{
+	case EGuildRank::F: return TEXT("F");
+	case EGuildRank::E: return TEXT("E");
+	case EGuildRank::D: return TEXT("D");
+	case EGuildRank::C: return TEXT("C");
+	case EGuildRank::B: return TEXT("B");
+	case EGuildRank::A: return TEXT("A");
+	case EGuildRank::S: return TEXT("S");
+	default: return TEXT("Unknown");
+	}
 }
